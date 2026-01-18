@@ -1,0 +1,33 @@
+services:
+  backend:
+    build: ./backend
+    container_name: fabric-catalog-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data  # Persistent database storage
+      - ./backend/static:/app/static  # Persistent image storage (images saved here)
+      - ./fabric-bookmarks.txt:/app/fabric-bookmarks.txt:ro  # Read-only bookmarks
+    environment:
+      - DATABASE_URL=sqlite:///./data/fabric_catalog.db
+      - PYTHONPATH=/app
+    working_dir: /app
+    command: sh -c "mkdir -p static/images data && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  frontend:
+    build: ./frontend
+    container_name: fabric-catalog-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/package.json:/app/package.json
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    working_dir: /app
+    command: sh -c "mkdir -p /tmp/.vite && npm run dev -- --host 0.0.0.0"
