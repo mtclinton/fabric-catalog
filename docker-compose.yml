@@ -7,7 +7,7 @@ services:
     volumes:
       - ./data:/app/data  # Persistent database storage
       - ./backend/static:/app/static  # Persistent image storage (images saved here)
-      - ./fabric-bookmarks.txt:/app/fabric-bookmarks.txt:ro  # Read-only bookmarks
+      - ./fabric-config.json:/app/fabric-config.json:ro  # Read-only config file with URLs
     environment:
       - DATABASE_URL=sqlite:///./data/fabric_catalog.db
       - PYTHONPATH=/app

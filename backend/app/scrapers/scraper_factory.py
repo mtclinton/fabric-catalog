@@ -2,13 +2,14 @@ from urllib.parse import urlparse
 from typing import Optional
 from .base_scraper import BaseScraper
 from .generic_scraper import GenericScraper
+from .fabrichouse_scraper import FabricHouseScraper
 
 
 class ScraperFactory:
     """Factory to get appropriate scraper for a URL"""
     
     _scrapers = {
-        'fabrichouse.com': None,  # Will be implemented
+        'fabrichouse.com': FabricHouseScraper,
         # Add more site-specific scrapers here
     }
     

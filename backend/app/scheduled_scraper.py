@@ -3,6 +3,7 @@ Scheduled scraper that runs daily to update fabric information
 """
 import asyncio
 import os
+import json
 from sqlalchemy.orm import Session
 from .database import SessionLocal
 from .models import Fabric
@@ -13,23 +14,26 @@ from urllib.parse import urlparse
 
 
 async def scrape_all_bookmarks():
-    """Scrape all URLs from the bookmarks file"""
+    """Scrape all URLs from the config file"""
     db: Session = SessionLocal()
     
     try:
-        # Read URLs from bookmarks file (mounted in container)
-        bookmarks_file = "/app/fabric-bookmarks.txt"
+        # Read URLs from config file (mounted in container)
+        config_file = "/app/fabric-config.json"
         
-        if not os.path.exists(bookmarks_file):
-            print(f"Bookmarks file not found: {bookmarks_file}")
+        if not os.path.exists(config_file):
+            print(f"Config file not found: {config_file}")
             return
         
-        urls = []
-        with open(bookmarks_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('http'):
-                    urls.append(line)
+        # Load URLs from JSON config file
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+        
+        urls = config.get("urls", [])
+        
+        if not urls:
+            print("No URLs found in config file")
+            return
         
         print(f"Found {len(urls)} URLs to scrape")
         
@@ -64,7 +68,7 @@ async def scrape_all_bookmarks():
                         db.commit()
                         print(f"Updated: {url}")
                 else:
-                    # Create new fabric
+                    # Create new fabric(s)
                     scraper = ScraperFactory.get_scraper(url)
                     if not scraper:
                         print(f"No scraper for: {url}")
@@ -72,6 +76,73 @@ async def scrape_all_bookmarks():
                     
                     data = await scraper.scrape(url)
                     
+                    # Handle listing pages that return multiple fabrics
+                    if data.get("is_listing_page") and data.get("fabrics"):
+                        print(f"Processing listing page with {len(data['fabrics'])} fabrics")
+                        for fabric_data in data['fabrics']:
+                            # Use the product URL from the fabric data if available, otherwise use original URL
+                            fabric_url = fabric_data.get('url', url)
+                            
+                            # Check if this fabric already exists
+                            existing = db.query(Fabric).filter(Fabric.url == fabric_url).first()
+                            
+                            if existing:
+                                # Update existing fabric
+                                if fabric_data.get("name"):
+                                    existing.name = fabric_data.get("name")
+                                if fabric_data.get("price"):
+                                    existing.price = fabric_data.get("price")
+                                if fabric_data.get("composition"):
+                                    existing.composition = fabric_data.get("composition")
+                                
+                                if fabric_data.get("image_url") and not existing.image_path:
+                                    print(f"Downloading image for existing fabric {existing.name}...")
+                                    image_path = await download_image(fabric_data["image_url"], existing.name)
+                                    if image_path:
+                                        existing.image_path = image_path
+                                
+                                existing.last_scraped = datetime.now()
+                                db.commit()
+                                print(f"Updated: {fabric_url}")
+                            else:
+                                # Create new fabric from listing page data
+                                parsed_url = urlparse(fabric_url)
+                                origin = parsed_url.netloc.replace('www.', '')
+                                
+                                image_path = None
+                                if fabric_data.get("image_url"):
+                                    print(f"Downloading image for {fabric_data.get('name', 'fabric')}...")
+                                    image_path = await download_image(fabric_data["image_url"], fabric_data.get("name", "fabric"))
+                                    if image_path:
+                                        print(f"Image saved: {image_path}")
+                                
+                                fabric = Fabric(
+                                    name=fabric_data.get("name", "Unknown"),
+                                    url=fabric_url,
+                                    origin=origin,
+                                    rating="unrated",
+                                    price=fabric_data.get("price"),
+                                    currency=fabric_data.get("currency", "EUR"),
+                                    composition=fabric_data.get("composition"),
+                                    description=fabric_data.get("description"),
+                                    image_path=image_path,
+                                    width=fabric_data.get("width"),
+                                    care_instructions=fabric_data.get("care_instructions"),
+                                    color=fabric_data.get("color"),
+                                    pattern=fabric_data.get("pattern"),
+                                    weight=fabric_data.get("weight"),
+                                    brand=fabric_data.get("brand"),
+                                    extra_info=fabric_data.get("extra_info"),
+                                )
+                                
+                                db.add(fabric)
+                                db.commit()
+                                print(f"Added: {fabric_url}")
+                        
+                        # Skip the normal processing for listing pages
+                        continue
+                    
+                    # Handle single product page
                     parsed_url = urlparse(url)
                     origin = parsed_url.netloc.replace('www.', '')
                     

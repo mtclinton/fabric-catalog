@@ -35,3 +35,7 @@ Thumbs.db
 data/
 backend/static/images/*
 !backend/static/images/.gitkeep
+
+# Config files
+fabric-config.json
+!fabric-config.example.json

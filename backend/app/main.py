@@ -93,6 +93,57 @@ async def scrape_fabric(
     try:
         data = await scraper.scrape(request.url)
         
+        # Handle listing pages that return multiple fabrics
+        if data.get("is_listing_page") and data.get("fabrics"):
+            # Return summary for listing pages
+            fabrics_added = []
+            for fabric_data in data['fabrics']:
+                fabric_url = fabric_data.get('url', request.url)
+                
+                # Check if already exists
+                existing = db.query(Fabric).filter(Fabric.url == fabric_url).first()
+                if existing:
+                    fabrics_added.append(existing)
+                    continue
+                
+                parsed_url = urlparse(fabric_url)
+                origin = parsed_url.netloc.replace('www.', '')
+                
+                image_path = None
+                if fabric_data.get("image_url"):
+                    image_path = await download_image(fabric_data["image_url"], fabric_data.get("name", "fabric"))
+                
+                fabric = Fabric(
+                    name=fabric_data.get("name", "Unknown"),
+                    url=fabric_url,
+                    origin=origin,
+                    rating="unrated",
+                    price=fabric_data.get("price"),
+                    currency=fabric_data.get("currency", "EUR"),
+                    composition=fabric_data.get("composition"),
+                    description=fabric_data.get("description"),
+                    image_path=image_path,
+                    width=fabric_data.get("width"),
+                    care_instructions=fabric_data.get("care_instructions"),
+                    color=fabric_data.get("color"),
+                    pattern=fabric_data.get("pattern"),
+                    weight=fabric_data.get("weight"),
+                    brand=fabric_data.get("brand"),
+                    extra_info=fabric_data.get("extra_info"),
+                )
+                
+                db.add(fabric)
+                db.commit()
+                db.refresh(fabric)
+                fabrics_added.append(fabric)
+            
+            # Return the first fabric as representative
+            if fabrics_added:
+                return fabrics_added[0]
+            else:
+                raise HTTPException(status_code=400, detail="No fabrics found on listing page")
+        
+        # Handle single product page
         # Extract origin from URL
         parsed_url = urlparse(request.url)
         origin = parsed_url.netloc.replace('www.', '')
