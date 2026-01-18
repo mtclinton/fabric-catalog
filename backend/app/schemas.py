@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 
@@ -12,7 +12,8 @@ class FabricBase(BaseModel):
     currency: Optional[str] = "USD"
     composition: Optional[str] = None
     description: Optional[str] = None
-    image_path: Optional[str] = None
+    image_path: Optional[str] = None  # Kept for backwards compatibility
+    image_paths: Optional[List[str]] = None  # Array of image paths
     width: Optional[str] = None
     care_instructions: Optional[str] = None
     color: Optional[str] = None

@@ -107,6 +107,18 @@ See http://localhost:8000/docs for interactive API documentation.
 
 ## Troubleshooting
 
+### Permission Errors
+
+If you see permission denied errors:
+
+```bash
+# Fix permissions on host directories
+chmod -R 777 data backend/static
+chmod 644 frontend/package.json frontend/vite.config.js frontend/index.html
+```
+
+Then restart: `docker-compose restart`
+
 ### Images Not Displaying
 
 - Check image exists: `ls backend/static/images/`

@@ -12,8 +12,44 @@ from .schemas import FabricCreate, FabricResponse, ScrapeRequest, RatingUpdate
 from .scrapers.scraper_factory import ScraperFactory
 from .utils import download_image
 from .scheduler import start_scheduler
+import sqlite3
 
 Base.metadata.create_all(bind=engine)
+
+# Migration: Add image_paths column if it doesn't exist
+def migrate_database():
+    """Add image_paths column to existing databases"""
+    if "sqlite" in str(engine.url):
+        # Get the database path from the URL
+        db_url = str(engine.url)
+        if db_url.startswith("sqlite:///./"):
+            db_path = db_url.replace("sqlite:///./", "")
+        elif db_url.startswith("sqlite:///"):
+            db_path = db_url.replace("sqlite:///", "")
+        else:
+            db_path = db_url.replace("sqlite://", "")
+        
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                
+                # Check if column exists
+                cursor.execute("PRAGMA table_info(fabrics)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                if "image_paths" not in columns:
+                    cursor.execute("ALTER TABLE fabrics ADD COLUMN image_paths TEXT")
+                    conn.commit()
+                    print(f"Migration: Added image_paths column to fabrics table in {db_path}")
+                else:
+                    print(f"Migration: image_paths column already exists")
+                
+                conn.close()
+            except Exception as e:
+                print(f"Migration warning: {e}")
+
+migrate_database()
 
 app = FastAPI(title="Fabric Catalog API", version="1.0.0")
 
@@ -109,9 +145,21 @@ async def scrape_fabric(
                 parsed_url = urlparse(fabric_url)
                 origin = parsed_url.netloc.replace('www.', '')
                 
+                # Download multiple images
+                image_paths = []
                 image_path = None
-                if fabric_data.get("image_url"):
+                image_urls = fabric_data.get("image_urls") or []
+                if image_urls:
+                    for img_url in image_urls:
+                        img_path = await download_image(img_url, fabric_data.get("name", "fabric"))
+                        if img_path:
+                            image_paths.append(img_path)
+                            if not image_path:
+                                image_path = img_path
+                elif fabric_data.get("image_url"):
                     image_path = await download_image(fabric_data["image_url"], fabric_data.get("name", "fabric"))
+                    if image_path:
+                        image_paths = [image_path]
                 
                 fabric = Fabric(
                     name=fabric_data.get("name", "Unknown"),
@@ -123,6 +171,7 @@ async def scrape_fabric(
                     composition=fabric_data.get("composition"),
                     description=fabric_data.get("description"),
                     image_path=image_path,
+                    image_paths=image_paths if image_paths else None,
                     width=fabric_data.get("width"),
                     care_instructions=fabric_data.get("care_instructions"),
                     color=fabric_data.get("color"),
@@ -148,17 +197,34 @@ async def scrape_fabric(
         parsed_url = urlparse(request.url)
         origin = parsed_url.netloc.replace('www.', '')
         
-        # Download and save image if image_url is provided by scraper
+        # Download and save images if image_urls or image_url is provided by scraper
+        image_paths = []
         image_path = None
-        if data.get("image_url"):
+        
+        # Handle multiple images (new approach)
+        image_urls = data.get("image_urls") or []
+        if image_urls:
+            print(f"Downloading {len(image_urls)} images for {data.get('name', 'fabric')}...")
+            for img_url in image_urls:
+                img_path = await download_image(img_url, data.get("name", "fabric"))
+                if img_path:
+                    image_paths.append(img_path)
+                    if not image_path:  # First image is also set as image_path for backwards compatibility
+                        image_path = img_path
+                    print(f"  Image saved: {img_path}")
+        
+        # Fallback to single image_url for backwards compatibility
+        if not image_paths and data.get("image_url"):
             print(f"Downloading image for {data.get('name', 'fabric')}...")
             image_path = await download_image(data["image_url"], data.get("name", "fabric"))
             if image_path:
+                image_paths = [image_path]
                 print(f"Image saved to {image_path}")
             else:
                 print(f"Warning: Failed to download image from {data.get('image_url')}")
-        else:
-            print(f"Warning: No image_url returned by scraper for {request.url}")
+        
+        if not image_paths:
+            print(f"Warning: No image_urls or image_url returned by scraper for {request.url}")
         
         fabric = Fabric(
             name=data.get("name", "Unknown"),
@@ -169,7 +235,8 @@ async def scrape_fabric(
             currency=data.get("currency", "USD"),
             composition=data.get("composition"),
             description=data.get("description"),
-            image_path=image_path,
+            image_path=image_path,  # First image for backwards compatibility
+            image_paths=image_paths if image_paths else None,  # All images
             width=data.get("width"),
             care_instructions=data.get("care_instructions"),
             color=data.get("color"),

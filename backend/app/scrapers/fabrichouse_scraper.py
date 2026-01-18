@@ -208,10 +208,11 @@ class FabricHouseScraper(BaseScraper):
         if composition:
             data['composition'] = composition
         
-        # Extract image URL - CRITICAL for image downloading
-        image_url = self._extract_image_url(soup, url)
-        if image_url:
-            data['image_url'] = image_url
+        # Extract image URLs - CRITICAL for image downloading (now extracts all images)
+        image_urls = self._extract_all_image_urls(soup, url)
+        if image_urls:
+            data['image_urls'] = image_urls  # List of all image URLs
+            data['image_url'] = image_urls[0] if image_urls else None  # First image for backwards compatibility
         
         # Extract other details
         description = self._extract_description(soup)
@@ -317,88 +318,114 @@ class FabricHouseScraper(BaseScraper):
         
         return None
     
-    def _extract_image_url(self, soup: BeautifulSoup, base_url: str) -> str:
-        """Extract product image URL - CRITICAL for image downloading"""
-        # Try multiple selectors for product images
-        img_selectors = [
-            'img[src*="product"]',
-            '.product-image img',
-            '.product-photo img',
-            'main img[src*="product"]',
-            '[class*="product"] img',
-            'img[itemprop="image"]',
-            '.gallery img',
-            'img[data-src*="product"]',
-            'img[alt*="F"]',  # Fabric House product images often have F codes in alt
+    def _should_exclude_image(self, img_url: str, img_elem=None) -> bool:
+        """Check if an image should be excluded (not a product image)"""
+        if not img_url:
+            return True
+        
+        img_url_lower = img_url.lower()
+        img_alt = (img_elem.get('alt', '') if img_elem else '').lower()
+        img_class = (img_elem.get('class', []) if img_elem and img_elem.get('class') else [])
+        img_class_str = ' '.join(img_class).lower() if isinstance(img_class, list) else str(img_class).lower()
+        
+        # Payment and brand logos to exclude
+        exclude_patterns = [
+            # Payment methods
+            'apple-pay', 'applepay', 'visa', 'mastercard', 'master-card', 'paypal', 'credit-card',
+            'payment', 'checkout', 'checkout-button',
+            # Brand/social logos
+            'facebook', 'twitter', 'instagram', 'pinterest', 'youtube', 'linkedin',
+            'social', 'social-icon', 'social-media',
+            # General logos/icons
+            'icon', 'logo', 'avatar', 'badge', 'button', 'placeholder', 'spinner', 'loading',
+            # Other non-product images
+            'trust', 'security', 'ssl', 'certificate', 'award', 'stamp', 'seal',
+            # UI elements
+            'close', 'menu', 'hamburger', 'arrow', 'chevron', 'star-empty',
         ]
         
-        for selector in img_selectors:
-            img_elem = soup.select_one(selector)
-            if img_elem:
-                img_url = (img_elem.get('src') or 
-                          img_elem.get('data-src') or 
-                          img_elem.get('data-lazy-src') or
-                          img_elem.get('data-original'))
-                
-                if img_url:
-                    # Convert to absolute URL
-                    if img_url.startswith('//'):
-                        img_url = 'https:' + img_url
-                    elif img_url.startswith('/'):
-                        parsed = urlparse(base_url)
-                        img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
-                    elif not img_url.startswith('http'):
-                        img_url = urljoin(base_url, img_url)
-                    
-                    # Filter out icons/logos
-                    if any(skip in img_url.lower() for skip in ['icon', 'logo', 'avatar', 'badge', 'button']):
-                        continue
-                    
-                    # Check size if available
-                    width = img_elem.get('width')
-                    height = img_elem.get('height')
-                    if width and height:
-                        try:
-                            if int(width) < 100 or int(height) < 100:
-                                continue
-                        except:
-                            pass
-                    
-                    return img_url
+        # Check URL
+        if any(pattern in img_url_lower for pattern in exclude_patterns):
+            return True
         
-        # Fallback: get largest image
-        all_images = soup.find_all('img')
-        largest_img = None
-        largest_size = 0
+        # Check alt text
+        if img_alt and any(pattern in img_alt for pattern in exclude_patterns):
+            return True
         
-        for img in all_images:
-            img_url = img.get('src') or img.get('data-src')
-            if not img_url:
+        # Check class names
+        if img_class_str and any(pattern in img_class_str for pattern in exclude_patterns):
+            return True
+        
+        # EXCLUDE SVG files - these are icons/logos, not product images
+        if '.svg' in img_url_lower:
+            return True
+        
+        # Exclude very small images (likely icons)
+        width = img_elem.get('width') if img_elem else None
+        height = img_elem.get('height') if img_elem else None
+        if width and height:
+            try:
+                if int(width) < 100 or int(height) < 100:
+                    return True
+            except:
+                pass
+        
+        return False
+    
+    def _extract_all_image_urls(self, soup: BeautifulSoup, base_url: str) -> List[str]:
+        """Extract all product image URLs from a Fabric House product page
+        
+        ONLY extracts images from: .gallery-slider-thumbnails-item img.gallery-slider-thumbnails-image
+        Note: data-nav attribute is added dynamically via JavaScript, so we only check for the class.
+        
+        HTML structure:
+        <div class="gallery-slider-thumbnails-item">
+            <div class="gallery-slider-thumbnails-item-inner">
+                <img class="gallery-slider-thumbnails-image" src="...">
+            </div>
+        </div>
+        """
+        image_urls = set()  # Use set to avoid duplicates
+        
+        # STRICT: Only extract images from .gallery-slider-thumbnails-item containers
+        # Note: data-nav is added via JavaScript, so we check for class only
+        thumbnail_items = soup.select('.gallery-slider-thumbnails-item')
+        
+        print(f"[DEBUG] Found {len(thumbnail_items)} .gallery-slider-thumbnails-item elements")
+        
+        for item in thumbnail_items:
+            # Within each thumbnail item, find the img.gallery-slider-thumbnails-image
+            img_elem = item.select_one('img.gallery-slider-thumbnails-image')
+            
+            if not img_elem:
+                print(f"[DEBUG] No img.gallery-slider-thumbnails-image found in thumbnail item")
                 continue
             
-            # Convert to absolute URL
+            # Try src first, then data-src, then data-zoom, then data-full (in order of preference)
+            img_url = (img_elem.get('src') or 
+                      img_elem.get('data-src') or 
+                      img_elem.get('data-zoom') or
+                      img_elem.get('data-full'))
+            
+            if not img_url:
+                print(f"[DEBUG] Skipping img element with no src/data-src/data-zoom/data-full")
+                continue
+            
+            # Convert to absolute URL if needed
             if img_url.startswith('//'):
                 img_url = 'https:' + img_url
+            elif img_url.startswith('/'):
+                parsed = urlparse(base_url)
+                img_url = f"{parsed.scheme}://{parsed.netloc}{img_url}"
             elif not img_url.startswith('http'):
                 img_url = urljoin(base_url, img_url)
             
-            # Skip icons/logos
-            if any(skip in img_url.lower() for skip in ['icon', 'logo', 'avatar']):
-                continue
-            
-            # Estimate size
-            width = img.get('width', '0')
-            height = img.get('height', '0')
-            try:
-                size = int(width) * int(height) if width and height else 10000
-                if size > largest_size:
-                    largest_size = size
-                    largest_img = img_url
-            except:
-                if not largest_img:
-                    largest_img = img_url
+            print(f"[DEBUG] Extracted image URL: {img_url}")
+            # Add the URL (already filtered by the specific selector)
+            image_urls.add(img_url)
         
-        return largest_img if largest_img else None
+        print(f"[DEBUG] Total unique image URLs extracted: {len(image_urls)}")
+        return list(image_urls)
     
     def _extract_description(self, soup: BeautifulSoup) -> str:
         """Extract product description"""

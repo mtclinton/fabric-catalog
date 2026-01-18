@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, JSON
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -15,7 +15,8 @@ class Fabric(Base):
     currency = Column(String, default="USD")
     composition = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
-    image_path = Column(String, nullable=True)
+    image_path = Column(String, nullable=True)  # Kept for backwards compatibility (first image)
+    image_paths = Column(JSON, nullable=True)  # Array of image paths for multiple images
     width = Column(String, nullable=True)
     care_instructions = Column(Text, nullable=True)
     color = Column(String, nullable=True)

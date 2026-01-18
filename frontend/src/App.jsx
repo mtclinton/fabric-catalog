@@ -13,6 +13,9 @@ function App() {
   const [success, setSuccess] = useState(null)
   const [scrapeUrl, setScrapeUrl] = useState('')
   const [batchUrls, setBatchUrls] = useState('')
+  const [galleryImages, setGalleryImages] = useState([])
+  const [galleryIndex, setGalleryIndex] = useState(0)
+  const [showGallery, setShowGallery] = useState(false)
 
   useEffect(() => {
     fetchFabrics()
@@ -133,6 +136,53 @@ function App() {
     return `${API_BASE_URL}/${imagePath}`
   }
 
+  const getAllImageUrls = (fabric) => {
+    // Get all image URLs from fabric (image_paths array or fallback to image_path)
+    const imagePaths = fabric.image_paths || (fabric.image_path ? [fabric.image_path] : [])
+    return imagePaths.map(path => getImageUrl(path)).filter(url => url !== null)
+  }
+
+  const openGallery = (fabric, imageIndex = 0) => {
+    const images = getAllImageUrls(fabric)
+    if (images.length > 0) {
+      setGalleryImages(images)
+      setGalleryIndex(imageIndex)
+      setShowGallery(true)
+    }
+  }
+
+  const closeGallery = () => {
+    setShowGallery(false)
+    setGalleryImages([])
+    setGalleryIndex(0)
+  }
+
+  const nextImage = () => {
+    setGalleryIndex((prev) => (prev + 1) % galleryImages.length)
+  }
+
+  const prevImage = () => {
+    setGalleryIndex((prev) => (prev - 1 + galleryImages.length) % galleryImages.length)
+  }
+
+  // Keyboard navigation for gallery
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      if (!showGallery) return
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setGalleryIndex((prev) => (prev - 1 + galleryImages.length) % galleryImages.length)
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        setGalleryIndex((prev) => (prev + 1) % galleryImages.length)
+      } else if (e.key === 'Escape') {
+        closeGallery()
+      }
+    }
+    window.addEventListener('keydown', handleKeyPress)
+    return () => window.removeEventListener('keydown', handleKeyPress)
+  }, [showGallery, galleryImages.length])
+
   return (
     <div className="container">
       <div className="header">
@@ -227,30 +277,40 @@ function App() {
           {fabrics.map((fabric) => (
             <div key={fabric.id} className="fabric-card">
               {/* Display fabric image if available */}
-              {getImageUrl(fabric.image_path) ? (
-                <img
-                  src={getImageUrl(fabric.image_path)}
-                  alt={fabric.name}
-                  className="fabric-image"
-                  onError={(e) => {
-                    // Hide image if it fails to load
-                    e.target.style.display = 'none'
-                  }}
-                  loading="lazy"  // Lazy load images for better performance
-                />
-              ) : (
-                // Placeholder when no image is available
-                <div className="fabric-image" style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: '#f0f0f0',
-                  color: '#999',
-                  fontSize: '0.9rem'
-                }}>
-                  No Image Available
-                </div>
-              )}
+              {(() => {
+                const imageUrls = getAllImageUrls(fabric)
+                const firstImage = imageUrls[0]
+                return firstImage ? (
+                  <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => openGallery(fabric, 0)}>
+                    <img
+                      src={firstImage}
+                      alt={fabric.name}
+                      className="fabric-image"
+                      onError={(e) => {
+                        e.target.style.display = 'none'
+                      }}
+                      loading="lazy"
+                    />
+                    {imageUrls.length > 1 && (
+                      <div className="image-count-badge">
+                        {imageUrls.length} photos
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  // Placeholder when no image is available
+                  <div className="fabric-image" style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: '#f0f0f0',
+                    color: '#999',
+                    fontSize: '0.9rem'
+                  }}>
+                    No Image Available
+                  </div>
+                )
+              })()}
               <div className="fabric-info">
                 <h3 className="fabric-name">{fabric.name}</h3>
                 {fabric.origin && (
@@ -323,6 +383,26 @@ function App() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Image Gallery Modal */}
+      {showGallery && galleryImages.length > 0 && (
+        <div className="gallery-modal" onClick={closeGallery}>
+          <div className="gallery-content" onClick={(e) => e.stopPropagation()}>
+            <button className="gallery-close" onClick={closeGallery}>&times;</button>
+            <button className="gallery-nav gallery-prev" onClick={prevImage}>&#8249;</button>
+            <img
+              src={galleryImages[galleryIndex]}
+              alt={`Image ${galleryIndex + 1} of ${galleryImages.length}`}
+              className="gallery-main-image"
+            />
+            <button className="gallery-nav gallery-next" onClick={nextImage}>&#8250;</button>
+            <div className="gallery-info">
+              <span className="gallery-counter">{galleryIndex + 1} / {galleryImages.length}</span>
+              <div className="gallery-hint">Use ← → arrow keys to navigate, Esc to close</div>
+            </div>
+          </div>
         </div>
       )}
     </div>

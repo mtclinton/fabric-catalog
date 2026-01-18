@@ -23,10 +23,26 @@ async def download_image(image_url: str, fabric_name: str) -> str:
     if not image_url:
         return None
     
+    # EXCLUDE SVG files - these are icons/logos, not product images
+    image_url_lower = image_url.lower()
+    if '.svg' in image_url_lower:
+        print(f"Skipping SVG file: {image_url}")
+        return None
+    
+    # Only allow actual image formats (JPG/JPEG/PNG/WEBP)
+    if not any(ext in image_url_lower for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+        print(f"Skipping non-image file: {image_url}")
+        return None
+    
     # Create images directory if it doesn't exist
     # This directory is mounted as a volume for persistence
     images_dir = "static/images"
     os.makedirs(images_dir, exist_ok=True)
+    # Set permissions if possible
+    try:
+        os.chmod(images_dir, 0o777)
+    except:
+        pass
     
     # Generate unique filename from fabric name and URL hash
     url_hash = hashlib.md5(image_url.encode()).hexdigest()[:8]
